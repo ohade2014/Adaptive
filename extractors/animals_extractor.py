@@ -3,8 +3,9 @@
 # Author:  Ohad ELiyahou
 # Date:    September 2024
 # Summary:
+import re
 import bs4
-import requests
+import logging
 import typing as t
 import core.common as co
 import core.utils as utils
@@ -20,17 +21,22 @@ class WikiAnimalsExtractor:
         self._animal_items = self._resolve_animal_items(table_body=table_body)
 
     def extract_animals(self, extended: bool = False) -> co.AnimalsExtractorOutput:
-        animal_list = list()
+        animal_name_to_data = dict()
+        animal_to_similar_name = dict()
         for index, animal_item in enumerate(self._animal_items):
             name = self._resolve_name(animal_item=animal_item)
+            self._resolve_similar_animal(name=name, animal_item=animal_item,
+                                         animal_to_similar_name=animal_to_similar_name)
             collateral_adjectives_list = self._resolve_collateral_adjectives_list(animal_item=animal_item)
-            #similar_animal =
             page_url = None
             if extended:
                 page_url = self._resolve_page_url(animal_item=animal_item)
-            animal_list.append(co.Animal(name=name, collateral_adjectives_list=collateral_adjectives_list,
-                                         page_url=page_url))
-        return co.AnimalsExtractorOutput(list_of_animals=animal_list)
+            animal_name_to_data[name.lower()] = co.Animal(name=name,
+                                                          collateral_adjectives_list=collateral_adjectives_list,
+                                                          page_url=page_url)
+        self._update_missing_fields(animal_name_to_data=animal_name_to_data,
+                                    animal_to_similar_name=animal_to_similar_name)
+        return co.AnimalsExtractorOutput(list_of_animals=list(animal_name_to_data.values()))
 
     def _resolve_name(self, animal_item: bs4.Tag) -> str:
         name_item_attribute = self._resolve_attribute_item(animal_item=animal_item, attribute_index=self._name_index,
@@ -46,48 +52,43 @@ class WikiAnimalsExtractor:
                 f'Unexpected number of names found ({relevant_names}) for animal: {animal_item}')
         return relevant_names[0]
 
+    def _resolve_similar_animal(self, name: str, animal_item: bs4.Tag,
+                                animal_to_similar_name: t.Dict[str, str]) -> None:
+        name_item_attribute = self._resolve_attribute_item(animal_item=animal_item, attribute_index=self._name_index,
+                                                           attribute_name='Name')
+        name_item_attribute_text = name_item_attribute.text
+        match = re.search(r'see\s+([A-Za-z]+)', name_item_attribute_text)
+        if match:
+            similar_name = match.group(1)
+            animal_to_similar_name[name] = similar_name
+
     def _resolve_collateral_adjectives_list(self, animal_item: bs4.Tag) -> t.Optional[t.List[str]]:
         try:
             collateral_adjectives_items = self._resolve_attribute_item(animal_item=animal_item,
                                                                        attribute_index=self._collateral_adjectives_index,
                                                                        attribute_name='collateral_adjectives')
             collateral_adjectives_item_values = list(collateral_adjectives_items.stripped_strings)
-            if not collateral_adjectives_item_values:
-                raise co.AnimalExtractorException(f'Can not resolve collateral_adjectives,'
-                                                  f' exist values in attribute: {collateral_adjectives_item_values},'
-                                                  f'animal item: {animal_item.get_text()}')
-            return list(filter(lambda x: x not in ['-', '—'], collateral_adjectives_item_values))
-        except co.AnimalExtractorException as e:
-            print(f'{e}')
+            if collateral_adjectives_item_values:
+                return list(filter(lambda x: x not in ['-', '—'], collateral_adjectives_item_values))
+            logging.warning(
+                f'Can not resolve collateral_adjectives, exist values in attribute: {collateral_adjectives_item_values}, animal item: {animal_item.get_text()}')
+        except co.AnimalExtractorException as _e:
+            logging.exception('Failed to fetch collateral_adjectives')
 
     def _resolve_page_url(self, animal_item: bs4.Tag) -> str:
-        name_attribute_item = self._resolve_attribute_item(animal_item=animal_item, attribute_index=self._name_index,
-                                                           attribute_name='Name')
-        if not (animal_a := name_attribute_item.find('a')):
-            raise co.AnimalExtractorException(
-                f'Can not resolve animal image URL, no page URL found in: {animal_item.text}')
-        if not (animal_url := animal_a['href']):
-            raise co.AnimalExtractorException(
-                f'Can not resolve animal image URL, Page reference exists: {animal_a.text}')
-        return utils.get_wiki_url(postfix=animal_url)
-
-    def _resolve_attribute_value(self, animal_item, attribute_index: int, attribute_name: str):
-        animal_attribute_item = self._resolve_attribute_item(animal_item=animal_item, attribute_index=attribute_index,
-                                                             attribute_name=attribute_name)
-        if not animal_attribute_item:
-            raise co.AnimalExtractorException(f'Can not find animal attribute for item: {animal_item.text}')
-        if not (animal_attribute_item_strings := [r.stripped_strings for r in animal_attribute_item.contents if
-                                                  isinstance(r, bs4.NavigableString)]):
-            raise co.AnimalExtractorException(f'Can not find animal relevant values for item: {animal_item.text}')
-        return animal_attribute_item_strings
-
-    @staticmethod
-    def _resolve_attribute_item(animal_item: bs4.Tag, attribute_index: int, attribute_name: str) -> bs4.Tag:
-        animal_attributes = animal_item.find_all('td')
-        if not animal_attributes or len(animal_attributes) <= attribute_index:
-            raise co.AnimalExtractorException(
-                f'Can not find animal {attribute_name} for animal item: {animal_item.get_text()}')
-        return animal_attributes[attribute_index]
+        try:
+            name_attribute_item = self._resolve_attribute_item(animal_item=animal_item,
+                                                               attribute_index=self._name_index,
+                                                               attribute_name='Name')
+            if not (animal_a := name_attribute_item.find('a')):
+                raise co.AnimalExtractorException(
+                    f'Can not resolve animal image URL, no page URL found in: {animal_item.text}')
+            if not (animal_url := animal_a['href']):
+                raise co.AnimalExtractorException(
+                    f'Can not resolve animal image URL, Page reference exists: {animal_a.text}')
+            return utils.get_wiki_url(postfix=animal_url)
+        except co.AnimalExtractorException as _e:
+            logging.exception('Failed to fetch page URL')
 
     def _resolve_table(self):
         soup = bs4.BeautifulSoup(self._webpage, "html.parser")
@@ -102,6 +103,12 @@ class WikiAnimalsExtractor:
             raise co.AnimalExtractorException('Can not find animal table body in element')
         return t_body
 
+    def _resolve_name_index(self, table_body: bs4.Tag) -> t.Optional[int]:
+        return self._resolve_header_index(table_body=table_body, header_name='Animal')
+
+    def _resolve_collateral_adjectives_index(self, table_body: bs4.Tag) -> t.Optional[int]:
+        return self._resolve_header_index(table_body=table_body, header_name='Collateral adjective')
+
     @staticmethod
     def _resolve_header_index(table_body: bs4.Tag, header_name: str) -> t.Optional[int]:
         table_headers = [r.text for r in table_body.find_all('th')]
@@ -110,23 +117,27 @@ class WikiAnimalsExtractor:
         except Exception as _e:
             raise co.AnimalExtractorException(f'Can not find {header_name} column index')
 
-    def _resolve_name_index(self, table_body: bs4.Tag) -> t.Optional[int]:
-        return self._resolve_header_index(table_body=table_body, header_name='Animal')
-
-    def _resolve_collateral_adjectives_index(self, table_body: bs4.Tag) -> t.Optional[int]:
-        return self._resolve_header_index(table_body=table_body, header_name='Collateral adjective')
-
     @staticmethod
     def _resolve_animal_items(table_body) -> t.List[bs4.Tag]:
         return [r for r in table_body.find_all('tr') if r.find('td')]
 
+    @staticmethod
+    def _resolve_attribute_item(animal_item: bs4.Tag, attribute_index: int, attribute_name: str) -> bs4.Tag:
+        animal_attributes = animal_item.find_all('td')
+        if not animal_attributes or len(animal_attributes) <= attribute_index:
+            raise co.AnimalExtractorException(
+                f'Can not find animal {attribute_name} for animal item: {animal_item.get_text()}')
+        return animal_attributes[attribute_index]
+
+    @staticmethod
+    def _update_missing_fields(animal_name_to_data: t.Dict[str, co.Animal],
+                               animal_to_similar_name: t.Dict[str, str]) -> None:
+        for animal_name, similar_animal_name in animal_to_similar_name.items():
+            if (animal_data := animal_name_to_data.get(animal_name.lower())) and (
+            similar_animal_data := animal_name_to_data.get(similar_animal_name.lower())):
+                if not animal_data.get_collateral_adjectives_list():
+                    animal_data.set_collateral_adjectives_list(similar_animal_data.get_collateral_adjectives_list())
+
 
 def create_wiki_animal_extractor(webpage: str):
     return WikiAnimalsExtractor(webpage=webpage)
-
-
-if __name__ == '__main__':
-    webpage = requests.get(url='https://en.wikipedia.org/wiki/List_of_animal_names')
-    extractor = create_wiki_animal_extractor(webpage=webpage.text)
-    r = extractor.extract_animals(extended=True)
-    print('r')
