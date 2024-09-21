@@ -9,12 +9,13 @@ import logging
 import typing as t
 import core.common as co
 import core.utils as utils
+import extractors.animals_extractor_base as aeb
 
 
-class WikiAnimalsExtractor:
+class WikiAnimalsExtractor(aeb.AnimalsExtractor):
 
     def __init__(self, webpage: str):
-        self._webpage = webpage
+        super().__init__(webpage=webpage)
         table_body = self._resolve_table()
         self._name_index = self._resolve_name_index(table_body=table_body)
         self._collateral_adjectives_index = self._resolve_collateral_adjectives_index(table_body=table_body)
@@ -25,6 +26,8 @@ class WikiAnimalsExtractor:
         animal_to_similar_name = dict()
         for index, animal_item in enumerate(self._animal_items):
             name = self._resolve_name(animal_item=animal_item)
+            if name == 'Procyonidae':
+                print('f')
             self._resolve_similar_animal(name=name, animal_item=animal_item,
                                          animal_to_similar_name=animal_to_similar_name)
             collateral_adjectives_list = self._resolve_collateral_adjectives_list(animal_item=animal_item)
@@ -57,7 +60,7 @@ class WikiAnimalsExtractor:
         name_item_attribute = self._resolve_attribute_item(animal_item=animal_item, attribute_index=self._name_index,
                                                            attribute_name='Name')
         name_item_attribute_text = name_item_attribute.text
-        match = re.search(r'see\s+([A-Za-z]+)', name_item_attribute_text)
+        match = re.search(r'see\s+([A-Za-z]+)', name_item_attribute_text, re.IGNORECASE)
         if match:
             similar_name = match.group(1)
             animal_to_similar_name[name] = similar_name
@@ -67,11 +70,11 @@ class WikiAnimalsExtractor:
             collateral_adjectives_items = self._resolve_attribute_item(animal_item=animal_item,
                                                                        attribute_index=self._collateral_adjectives_index,
                                                                        attribute_name='collateral_adjectives')
-            collateral_adjectives_item_values = list(collateral_adjectives_items.stripped_strings)
-            if collateral_adjectives_item_values:
-                return list(filter(lambda x: x not in ['-', '—'], collateral_adjectives_item_values))
-            logging.warning(
-                f'Can not resolve collateral_adjectives, exist values in attribute: {collateral_adjectives_item_values}, animal item: {animal_item.get_text()}')
+            relevant_collateral_adjectives_items = list()
+            for collateral_adjectives_item in collateral_adjectives_items.contents:
+                if isinstance(collateral_adjectives_item, bs4.NavigableString):
+                    relevant_collateral_adjectives_items.extend(list(collateral_adjectives_item.stripped_strings))
+            return list(filter(lambda x: x not in ['-', '—'], relevant_collateral_adjectives_items))
         except co.AnimalExtractorException as _e:
             logging.exception('Failed to fetch collateral_adjectives')
 

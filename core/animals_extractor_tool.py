@@ -5,7 +5,7 @@
 # Summary:
 import requests
 import core.common as co
-import extractors.animals_extractor as ae
+import extractors.animals_wiki_extractor as awe
 import extractors.animal_page_extractor as ape
 import downloaders.animal_image_downloader as aid
 from exporters.animal_exporter_html import AnimalExporterHTML
@@ -40,7 +40,7 @@ def _download_image(animal: co.Animal) -> str:
 
 if __name__ == '__main__':
     main_webpage = _extract_main_page()
-    wiki_animal_extractor = ae.create_wiki_animal_extractor(webpage=main_webpage)
+    wiki_animal_extractor = awe.create_wiki_animal_extractor(webpage=main_webpage)
     animal_extractor_output = wiki_animal_extractor.extract_animals(extended=True)
     for animal_obj in animal_extractor_output.get_list_of_animals():
         file_path = _download_image(animal=animal_obj)

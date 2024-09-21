@@ -10,10 +10,6 @@ class AnimalExtractorException(Exception):
     pass
 
 
-class AnimalPageExtractorException(Exception):
-    pass
-
-
 class Animal(object):
 
     def __init__(self, name: str, collateral_adjectives_list: t.List[str] = None, page_url: str = None,
